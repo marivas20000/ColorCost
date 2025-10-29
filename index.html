@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>ColorCost — калькулятор</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.28/jspdf.plugin.autotable.min.js"></script>
+  <style>
+    body { font-family: sans-serif; background:#f5f5f5; padding:20px; }
+    h2 { margin-top:0; }
+    .block { background:#fff; padding:15px; margin-bottom:15px; border-radius:8px; }
+    label { display:block; margin:6px 0 2px; }
+    input { width:100%; padding:6px; margin-bottom:8px; }
+    button { padding:8px 12px; margin:5px 0; }
+    .row { border:1px solid #ddd; padding:10px; margin-bottom:10px; border-radius:6px; }
+    pre { background:#eee; padding:10px; border-radius:6px; }
+  </style>
+</head>
+<body>
+  <h2>ColorCost</h2>
+
+  <div class="block">
+    <h3>Краски</h3>
+    <div id="paints"></div>
+    <button onclick="addRow('paints')">+ Добавить краску</button>
+  </div>
+
+  <div class="block">
+    <h3>Оксиды</h3>
+    <div id="oxids"></div>
+    <button onclick="addRow('oxids')">+ Добавить оксид</button>
+  </div>
+
+  <div class="block">
+    <h3>Наценка и работа</h3>
+    <label>Наценка (%)</label>
+    <input id="margin" type="number" placeholder="30">
+    <label>Стоимость работы (₽)</label>
+    <input id="labor" type="number" placeholder="2000">
+  </div>
+
+  <div class="block">
+    <h3>Итог</h3>
+    <pre id="result">—</pre>
+    <button onclick="calculate()">Пересчитать</button>
+    <button onclick="savePDF()">Сохранить PDF</button>
+  </div>
+
+<script>
+function addRow(containerId) {
+  const div = document.createElement('div');
+  div.className = 'row';
+  div.innerHTML = `
+    <label>Название</label>
+    <input type="text" class="name" placeholder="Напр. L'Oréal 8.1">
+    <label>Объем (мл)</label>
+    <input type="number" class="ml" placeholder="60">
+    <label>Цена за объем (₽)</label>
+    <input type="number" class="price" placeholder="600">
+    <label>Расход (мл)</label>
+    <input type="number" class="used" placeholder="30">
+    <button onclick="this.parentNode.remove()">Удалить</button>
+  `;
+  document.getElementById(containerId).appendChild(div);
+}
+
+function collectRows(containerId) {
+  const rows = document.getElementById(containerId).querySelectorAll('.row');
+  const items = [];
+  rows.forEach(r => {
+    const name = r.querySelector('.name').value;
+    const ml = parseFloat(r.querySelector('.ml').value) || 0;
+    const price = parseFloat(r.querySelector('.price').value) || 0;
+    const used = parseFloat(r.querySelector('.used').value) || 0;
+    const perMl = ml ? price / ml : 0;
+    const cost = perMl * used;
+    items.push({ name, ml, price, used, perMl, cost });
+  });
+  return items;
+}
+
+function calculate() {
+  const paints = collectRows('paints');
+  const oxids = collectRows('oxids');
+  const margin = parseFloat(document.getElementById('margin').value) || 0;
+  const labor = parseFloat(document.getElementById('labor').value) || 0;
+
+  const costPaints = paints.reduce((s,i)=>s+i.cost,0);
+  const costOxids = oxids.reduce((s,i)=>s+i.cost,0);
+  const materials = costPaints + costOxids;
+  const marginVal = materials * margin / 100;
+  const total = materials + marginVal + labor;
+
+  let text = '';
+  paints.forEach(p=>{
+    text += Краска ${p.name||''}: ${p.used} мл × ${p.perMl.toFixed(2)} ₽ = ${p.cost.toFixed(2)} ₽\n;
+  });
+  oxids.forEach(o=>{
+    text += Оксид ${o.name||''}: ${o.used} мл × ${o.perMl.toFixed(2)} ₽ = ${o.cost.toFixed(2)} ₽\n;
+  });
+  text += \nСебестоимость: ${materials.toFixed(2)} ₽\n;
+  text += Наценка (${margin}%): ${marginVal.toFixed(2)} ₽\n;
+  text += Работа: ${labor.toFixed(2)} ₽\n;
+  text += Итого: ${total.toFixed(2)} ₽;
+
+  document.getElementById('result').textContent = text;
+  return { paints, oxids, margin, labor, materials, marginVal, total };
+}
+
+function savePDF() {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+  const data = calculate();
+
+  // Заглушка "Ваше лого"
+  doc.setDrawColor(0);
+  doc.setFillColor(230,230,230);
+  doc.rect(10, 10, 40, 20, "F");
+  doc.setFontSize(10);
+  doc.text("Ваше лого", 15, 22);
+
+  doc.setFontSize(16);
+  doc.text("ColorCost — расчёт услуги", 60, 20);
+  doc.setFontSize(10);
+  doc.text(`Дата: ${new Date().toLocaleString('ru-RU')}`, 60, 27);
+
+  // Таблица материалов
+  const rows = [];
+  [...data.paints, ...data.oxids].forEach(it=>{
+    rows.push([
+      it.name || 'Материал',
+      it.ml,
+      it.price,
+      it.used,
+      it.perMl.toFixed(2),
+      it.cost.toFixed(2)
+    ]);
+  });
+
+  doc.autoTable({
+    head: [['Название','Объем (мл)','Цена (₽)','Расход (мл)','₽/мл','Итог (₽)']],
+    body: rows,
+    startY: 40
+  });
+
+  let y = doc.lastAutoTable.finalY + 10;
+  doc.setFontSize(12);
+  doc.text(`Себестоимость: ${data.materials.toFixed(2)} ₽`, 10, y); y+=6;
+  doc.text(`Наценка (${data.margin}%): ${data.marginVal.toFixed(2)} ₽`, 10, y); y+=6;
+  doc.text(`Работа: ${data.labor.toFixed(2)} ₽`, 10, y); y+=6;
+  doc.setFontSize(14);
+  doc.text(`Итого: ${data.total.toFixed(2)} ₽`, 10, y+4);
+
+  doc.save("colorcost.pdf");
+}
+
+// Добавим по одному полю по умолчанию
+addRow('paints');
+addRow('oxids');
+</script>
+</body>
+</html>
